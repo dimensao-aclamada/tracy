@@ -25,7 +25,7 @@ Inspired by **Dick Tracy**, the tough, fast, and intelligent detective, Tracy he
 
 ### From source
 ```bash
-git clone https://github.com/yourname/tracy.git
+git clone https://github.com/dimensao-aclamada/tracy.git
 cd tracy
 pip install .
 ```
