@@ -6,43 +6,33 @@ import json
 import shutil
 import datetime
 import sys
+import platform
 
-TRACY_DIR = ".tracy"
+# --- Global Tracy paths ---
+if platform.system() == "Windows":
+    TRACY_DIR = os.path.join(os.environ["USERPROFILE"], ".tracy")
+else:
+    TRACY_DIR = os.path.join(os.path.expanduser("~"), ".tracy")
+
+OBJECTS_DIR = os.path.join(TRACY_DIR, "objects")
 TRACY_DB = os.path.join(TRACY_DIR, "tracy.json")
 
 # --- Helpers ---
-def init_env(force=False):
-    """Initialize a Tracy repository in the current folder."""
-    if os.path.exists(TRACY_DIR) and not force:
-        print("Tracy repository already initialized.")
-        return
+def ensure_global_repo():
+    """Ensure the global repo exists."""
     os.makedirs(TRACY_DIR, exist_ok=True)
-    if not os.path.exists(TRACY_DB) or force:
+    os.makedirs(OBJECTS_DIR, exist_ok=True)
+    if not os.path.exists(TRACY_DB):
         with open(TRACY_DB, "w") as f:
-            json.dump([], f)
-    print("Initialized empty Tracy repository in", os.path.abspath(TRACY_DIR))
-
-
-def ensure_env(confirm=True):
-    """Ensure Tracy repository exists, optionally asking before init."""
-    if not os.path.exists(TRACY_DIR):
-        if confirm:
-            ans = input("No Tracy repository found. Initialize one here? (Y/N): ").strip().upper()
-            if ans != "Y":
-                print("Aborted.")
-                sys.exit(1)
-        init_env()
-
+            json.dump({"projects": {}}, f, indent=2)
 
 def load_db():
     with open(TRACY_DB, "r") as f:
         return json.load(f)
 
-
 def save_db(db):
     with open(TRACY_DB, "w") as f:
         json.dump(db, f, indent=2)
-
 
 def file_hash(path):
     h = hashlib.sha256()
@@ -50,7 +40,6 @@ def file_hash(path):
         for chunk in iter(lambda: f.read(4096), b""):
             h.update(chunk)
     return h.hexdigest()
-
 
 def bump_version(last_version, level):
     if not last_version:
@@ -63,34 +52,51 @@ def bump_version(last_version, level):
     else:  # M
         return f"{major}.{minor}.{patch+1}"
 
-
 def search_file(filename):
-    """Search recursively for filename in cwd; return list of full paths."""
     matches = []
     for root, _, files in os.walk("."):
         if filename in files:
             matches.append(os.path.abspath(os.path.join(root, filename)))
     return matches
 
-
 # --- Commands ---
-def create_version():
-    ensure_env()
+def init_project(project_name):
+    ensure_global_repo()
+    db = load_db()
+    if project_name in db["projects"]:
+        print(f"Project '{project_name}' already exists.")
+    else:
+        db["projects"][project_name] = {"versions": []}
+        save_db(db)
+        print(f"Initialized project '{project_name}' in centralized Tracy repository.")
+
+def create_version(project_name=None):
+    ensure_global_repo()
+    db = load_db()
+    
+    if project_name is None:
+        project_name = input("Project name (leave blank for 'default'): ").strip() or "default"
+
+    if project_name not in db["projects"]:
+        create = input(f"Project '{project_name}' not found. Create it? (Y/N): ").strip().upper()
+        if create != "Y":
+            print("Aborted.")
+            return
+        db["projects"][project_name] = {"versions": []}
 
     level = input("Type L for launch, S for significant improvement or M for minor improvement: ").strip().upper()
     filename = input("Type the name (or path) of the file to be versioned: ").strip()
 
-    # If user gave a path, resolve directly
+    # Resolve path
     if os.path.sep in filename or os.path.isabs(filename):
         abs_path = os.path.abspath(filename)
         if not os.path.exists(abs_path):
             print("File not found!")
             return
     else:
-        # Search in subfolders
         matches = search_file(filename)
         if not matches:
-            print(f"No file named '{filename}' found in this folder or subfolders.")
+            print(f"No file named '{filename}' found.")
             return
         elif len(matches) == 1:
             abs_path = matches[0]
@@ -100,121 +106,91 @@ def create_version():
                 print(f"{idx}. {path}")
             choice = input("Choose the number: ").strip()
             try:
-                idx = int(choice) - 1
-                abs_path = matches[idx]
-            except Exception:
+                abs_path = matches[int(choice)-1]
+            except:
                 print("Invalid choice.")
                 return
 
     commit = input("Commit message: ").strip()
     label = input("Optional label (press Enter to skip): ").strip()
 
-    db = load_db()
-    last_entry = next((e for e in reversed(db) if e["file"] == abs_path), None)
+    versions = db["projects"][project_name]["versions"]
+    last_entry = next((e for e in reversed(versions) if e["path"] == abs_path), None)
     last_version = last_entry["version"] if last_entry else None
-
     new_version = bump_version(last_version, level)
     h = file_hash(abs_path)
 
-    # copy file to .tracy
-    dest_path = os.path.join(TRACY_DIR, h)
+    # Copy file
+    dest_path = os.path.join(OBJECTS_DIR, h)
     if not os.path.exists(dest_path):
         shutil.copy2(abs_path, dest_path)
 
-    # update DB
-    for e in db:
-        if e["file"] == abs_path:
+    # Update metadata
+    for e in versions:
+        if e["path"] == abs_path:
             e["latest"] = False
 
     entry = {
         "hash": h,
-        "file": abs_path,
+        "path": abs_path,
         "version": new_version,
         "latest": True,
         "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
         "commit": commit,
         "label": label if label else None
     }
-    db.append(entry)
+    versions.append(entry)
     save_db(db)
-    print(f"Version {new_version} created for {abs_path} (hash {h[:8]}...)")
+    print(f"Version {new_version} created for {abs_path} in project '{project_name}' (hash {h[:8]}...)")
 
-
-def reset_version():
-    ensure_env()
-
-    hash_prefix = input("Type the hash (full or short) of the version to reset to: ").strip()
+def list_versions(project_name=None):
+    ensure_global_repo()
     db = load_db()
-    matches = [e for e in db if e["hash"].startswith(hash_prefix)]
 
-    if not matches:
-        print("No version found with that hash.")
-        return
+    projects = [project_name] if project_name else db["projects"].keys()
+    for proj in projects:
+        if proj not in db["projects"]:
+            print(f"Project '{proj}' not found.")
+            continue
+        print(f"\nProject: {proj}")
+        versions = db["projects"][proj]["versions"]
+        if not versions:
+            print("  No versions yet.")
+            continue
+        for e in versions:
+            mark = "(Latest)" if e["latest"] else ""
+            label = f"[{e['label']}]" if e.get("label") else ""
+            print(f"  {e['path']} v{e['version']} {label} {mark}")
+            print(f"    Commit: {e['commit']}")
+            print(f"    Time:   {e['timestamp']}")
+            print(f"    Hash:   {e['hash']}")
 
-    if len(matches) > 1:
-        matches.sort(key=lambda e: e["timestamp"], reverse=True)
-        entry = matches[0]
-        print(f"Multiple matches found, using the most recent version v{entry['version']} for {entry['file']}")
-    else:
-        entry = matches[0]
-
-    filename = entry["file"]
-
-    shutil.copy2(os.path.join(TRACY_DIR, entry["hash"]), filename)
-    for e in db:
-        if e["file"] == filename:
-            e["latest"] = False
-    entry["latest"] = True
-    save_db(db)
-
-    print(f"{filename} reset to version {entry['version']} (hash {entry['hash']})")
-
-
-def list_versions():
-    ensure_env(confirm=False)
-
-    db = load_db()
-    if not db:
-        print("No versions yet.")
-        return
-
-    for e in db:
-        mark = "(Latest)" if e["latest"] else ""
-        label = f"[{e['label']}]" if e.get("label") else ""
-        print(f"{e['file']} v{e['version']} {label} {mark}")
-        print(f"  Commit: {e['commit']}")
-        print(f"  Time:   {e['timestamp']}")
-        print(f"  Hash:   {e['hash']}")
-        print()
-
-
-# --- CLI Entry ---
+# --- CLI ---
 def main():
-    if len(sys.argv) > 1:
-        cmd = sys.argv[1].lower()
-        if cmd == "init":
-            init_env()
-        elif cmd == "create":
-            create_version()
-        elif cmd == "reset":
-            reset_version()
-        elif cmd == "list":
-            list_versions()
-        else:
-            print("Unknown command. Use 'init', 'create', 'reset', or 'list'.")
+    args = sys.argv[1:]
+    if not args:
+        print("Commands: init <project>, create [--project NAME], list [--project NAME]")
+        return
+    cmd = args[0].lower()
+    if cmd == "init":
+        if len(args) < 2:
+            print("Usage: tracy init <project_name>")
+            return
+        init_project(args[1])
+    elif cmd == "create":
+        project = None
+        if "--project" in args:
+            idx = args.index("--project")
+            project = args[idx+1] if idx+1 < len(args) else None
+        create_version(project)
+    elif cmd == "list":
+        project = None
+        if "--project" in args:
+            idx = args.index("--project")
+            project = args[idx+1] if idx+1 < len(args) else None
+        list_versions(project)
     else:
-        choice = input("Type C to create, R to reset, L for list, or I for init: ").strip().upper()
-        if choice == "C":
-            create_version()
-        elif choice == "R":
-            reset_version()
-        elif choice == "L":
-            list_versions()
-        elif choice == "I":
-            init_env()
-        else:
-            print("Invalid option.")
-
+        print("Unknown command. Use init, create, list.")
 
 if __name__ == "__main__":
     main()
