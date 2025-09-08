@@ -1,0 +1,76 @@
+# ==========================
+# Python cache and bytecode
+# ==========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyd
+*.pycache/
+*.pytest_cache/
+*.mypy_cache/
+*.pyre/
+
+# ==========================
+# PyInstaller / build files
+# ==========================
+dist/
+build/
+*.spec
+*.egg-info/
+*.egg
+*.whl
+
+# ==========================
+# OS generated files
+# ==========================
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ==========================
+# IDE / editor configs
+# ==========================
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.iml
+*.swp
+*.bak
+*.tmp
+
+# ==========================
+# Logs and temp files
+# ==========================
+*.log
+*.tmp
+*.temp
+
+# ==========================
+# Virtual environments
+# ==========================
+venv/
+env/
+ENV/
+.venv/
+
+# ==========================
+# Coverage and testing
+# ==========================
+.coverage
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+*.pytest_cache/
+
+# ==========================
+# Other
+# ==========================
+*.db
+*.sqlite3
+*.tar.gz
+*.zip
+*.rar
+*.7z
